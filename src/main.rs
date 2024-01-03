@@ -1,13 +1,61 @@
 use std::io::prelude::*; // Contains the read/write traits
 use std::net::{TcpListener, TcpStream};
-use std::io;
+use std::{io, env};
 use std::thread;
 use url::Url;
+use regex::Regex;
 
 const PORT: i32 = 8888;
+const PATH_DB: &str = "/data/activities.db";
+static mut BYPASS: bool = false;
+
+struct Database { 
+    in_memory: bool,
+    path: String,
+    connection: Option<sqlite::Connection>,
+    by_pass: bool
+}
+
+impl Database {
+    fn read_db(&mut self, path: String) {
+        //self.in_memory = in_memory;
+        self.path = path.clone();
+        self.in_memory = self.path.is_empty();
+
+        self.connection = match self.in_memory {
+            true => Option::from(sqlite::open(":memory:").unwrap()),
+            false => Option::from(sqlite::open(&self.path).unwrap())
+        };
+    }
+
+    fn valid_hostname(&mut self, hostname: &str) -> bool {
+        let query = "SELECT coalesce(valid, 0) as valid from ( SELECT max(priority), valid from activity where hostname = :hostname )";
+        
+        match self.connection.as_mut() {
+            Some(connection) => {
+                let mut statement = connection.prepare(query).unwrap();
+                _ = statement.bind((":hostname", hostname)).unwrap();
+                match statement.next() {
+                    Ok(_) => statement.read::<i64, _>("valid").unwrap() == 1,
+                    Err(_) => false,
+                }
+            },
+            None => false //panic!("Error"),
+        }
+    }
+}
+
+// "/data/activities.db"
 
 fn handle_client(mut stream: TcpStream) {
-    
+    let mut db = Database { 
+        in_memory: true, 
+        path: String::from(PATH_DB), 
+        connection: None,
+        by_pass: unsafe { BYPASS }
+    };
+    db.read_db(String::from(PATH_DB));
+
     let mut buf = [0; 4096];
 
     // Read the bytes from the stream
@@ -20,8 +68,20 @@ fn handle_client(mut stream: TcpStream) {
     let mut request = httparse::Request::new(&mut headers);
     _ = request.parse(&buf).unwrap();
 
-    let method = request.method.unwrap();
+    // let requst_str = buf.iter().map(|&c| c as char).collect::<String>();
+    // println!("[*] tunnel buffer: {}\n", requst_str);
+
     let mut website = String::from(request.path.unwrap());
+
+    let re = Regex::new(r":[0-9]*").unwrap();
+    let result = re.replace_all(&website, "");
+    if !db.valid_hostname(&result) && !db.by_pass {
+        println!("Blocking {result}");
+        return ()
+    }
+    println!("Connecting to {}", website);
+
+    let method = request.method.unwrap();
 
     if !method.eq("CONNECT") {
         let url = Url::parse(&website).unwrap();
@@ -34,7 +94,6 @@ fn handle_client(mut stream: TcpStream) {
         website.push_str(&port_site.to_string());
     }
 
-    println!("[*] Connecting to {}", website);
     let mut tunnel = match TcpStream::connect(website) {
         Ok(t) => t,
         Err(err) => {
@@ -116,8 +175,22 @@ fn handle_client(mut stream: TcpStream) {
     }
  }
 
+unsafe fn set_enable_by_pass() -> bool {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        let enable_by_pass = &args[1];
+        BYPASS = enable_by_pass == "1";
+    } else {
+        BYPASS = false;
+    }
+
+    return BYPASS;
+}
+
 
 fn main() -> std::io::Result<()> {
+    unsafe { set_enable_by_pass() };
+   
     // Create a server
     let local_addr = format!("localhost:{}", PORT);
     let server = TcpListener::bind(local_addr)?;
@@ -125,8 +198,8 @@ fn main() -> std::io::Result<()> {
     // Keep spinning and spawn threads for any incoming connections
     for stream_result in server.incoming() {
         match stream_result {
-            Ok(stream) => thread::spawn(move || handle_client(stream)), // Spawn a new thread, ignore the return value because we don't need to join threads
-            _          => continue
+            Ok(stream) => thread::spawn(move || handle_client(stream)), 
+            _                     => continue
         };
     }
     Ok(())

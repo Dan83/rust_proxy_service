@@ -1,4 +1,4 @@
-use std::io::prelude::*; // Contains the read/write traits
+use std::io::prelude::*; 
 use std::net::{TcpListener, TcpStream};
 use std::{io, env};
 use std::thread;
@@ -29,12 +29,31 @@ impl Database {
     }
 
     fn valid_hostname(&mut self, hostname: &str) -> bool {
-        let query = "SELECT coalesce(valid, 0) as valid from ( SELECT max(priority), valid from activity where hostname = :hostname )";
+        let mut query = String::from("SELECT coalesce(valid, 0) as valid from ( SELECT max(priority), valid from activity where ");
         
+        let split_hostname: Vec<_> = hostname.split(".").collect();
+        let num_sub_domain = split_hostname.len();
+
+        let res = &split_hostname[1..(num_sub_domain-1)];
+
+        query.push_str("hostname = '");
+        query.push_str(hostname);
+        query.push_str("'");
+
+        for (i, _el) in res.iter().enumerate() {
+            query.push_str(" or ");
+            
+            let host2 = split_hostname[(i+1)..(num_sub_domain)].join(".");
+            query.push_str("hostname = '*.");
+            query.push_str(&host2);
+            query.push_str("'");
+        }
+        query.push_str(")");
+        println!("{}", query);
+
         match self.connection.as_mut() {
             Some(connection) => {
                 let mut statement = connection.prepare(query).unwrap();
-                _ = statement.bind((":hostname", hostname)).unwrap();
                 match statement.next() {
                     Ok(_) => statement.read::<i64, _>("valid").unwrap() == 1,
                     Err(_) => false,
@@ -42,6 +61,7 @@ impl Database {
             },
             None => false //panic!("Error"),
         }
+
     }
 }
 

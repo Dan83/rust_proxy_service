@@ -49,7 +49,7 @@ impl Database {
             query.push_str("'");
         }
         query.push_str(")");
-        println!("{}", query);
+        // println!("{}", query);
 
         match self.connection.as_mut() {
             Some(connection) => {

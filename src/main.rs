@@ -8,6 +8,7 @@ use regex::Regex;
 const PORT: i32 = 8888;
 const PATH_DB: &str = "/data/activities.db";
 static mut BYPASS: bool = false;
+const DEAMON_MODE: bool = true;
 
 struct Database { 
     in_memory: bool,
@@ -26,6 +27,20 @@ impl Database {
             true => Option::from(sqlite::open(":memory:").unwrap()),
             false => Option::from(sqlite::open(&self.path).unwrap())
         };
+    }
+
+    fn enable_bypass_from_db(&mut self) -> bool {
+        let query = String::from("SELECT bypass from CONFIG");
+        match self.connection.as_mut() {
+            Some(connection) => {
+                let mut statement = connection.prepare(query).unwrap();
+                match statement.next() {
+                    Ok(_) => statement.read::<i64, _>("bypass").unwrap() == 1,
+                    Err(_) => false,
+                }
+            },
+            None => false //panic!("Error"),
+        }
     }
 
     fn valid_hostname(&mut self, hostname: &str) -> bool {
@@ -87,19 +102,26 @@ fn handle_client(mut stream: TcpStream) {
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut request = httparse::Request::new(&mut headers);
     _ = request.parse(&buf).unwrap();
-
-    // let requst_str = buf.iter().map(|&c| c as char).collect::<String>();
-    // println!("[*] tunnel buffer: {}\n", requst_str);
-
+    
     let mut website = String::from(request.path.unwrap());
 
     let re = Regex::new(r":[0-9]*").unwrap();
     let result = re.replace_all(&website, "");
-    if !db.valid_hostname(&result) && !db.by_pass {
-        println!("Blocking {result}");
+
+    let bypass = !db.enable_bypass_from_db() && !db.by_pass;
+    let is_not_valid = db.valid_hostname(&result);
+
+    if !is_not_valid && !bypass {
+        if !DEAMON_MODE { 
+            println!("Blocking {result}");
+        }
+
         return ()
     }
-    println!("Connecting to {}", website);
+
+    if !DEAMON_MODE { 
+        println!("Connecting to {}", website);
+    }
 
     let method = request.method.unwrap();
 

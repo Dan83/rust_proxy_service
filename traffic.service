@@ -1,0 +1,8 @@
+[Unit]
+Description=Script
+
+[Service]
+ExecStart=/usr/bin/traffic
+
+[Install]
+WantedBy=multi-user.target 

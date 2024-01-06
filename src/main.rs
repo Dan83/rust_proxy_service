@@ -58,14 +58,35 @@ impl Database {
     }
 
     fn has_hostname(&mut self, hostname: &str) -> bool { 
-        let query = format!("SELECT count(hostname) as len from activity where hostname ='{}'", hostname);
+        let mut query = format!("SELECT count(hostname) as len from activity where ");
+
+        let split_hostname: Vec<_> = hostname.split(".").collect();
+        let num_sub_domain = split_hostname.len();
+
+        let res = &split_hostname[1..(num_sub_domain-1)];
+
+        query.push_str("hostname = '");
+        query.push_str(hostname);
+        query.push_str("'");
+
+        for (i, _el) in res.iter().enumerate() {
+            query.push_str(" or ");
+            
+            let host2 = split_hostname[(i+1)..(num_sub_domain)].join(".");
+            query.push_str("hostname = '*.");
+            query.push_str(&host2);
+            query.push_str("'");
+        }
 
         match self.connection.as_mut() {
             Some(connection) => {
                 let mut statement = connection.prepare(query).unwrap();
                 match statement.next() {
                     Ok(_) => statement.read::<i64, _>("len").unwrap() > 0,
-                    Err(_) => false,
+                    Err(err) =>  {
+                        println!("{}", err);
+                        false
+                    }
                 }
             },
             None => false //panic!("Error"),

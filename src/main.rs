@@ -58,16 +58,16 @@ impl Database {
     }
 
     fn has_hostname(&mut self, hostname: &str) -> bool { 
-        let mut query = format!("SELECT count(hostname) as len from activity where ");
+        let mut query = String::from("SELECT count(hostname) as len from activity where ");
 
-        let split_hostname: Vec<_> = hostname.split(".").collect();
+        let split_hostname: Vec<_> = hostname.split('.').collect();
         let num_sub_domain = split_hostname.len();
 
         let res = &split_hostname[1..(num_sub_domain-1)];
 
         query.push_str("hostname = '");
         query.push_str(hostname);
-        query.push_str("'");
+        query.push('\'');
 
         for (i, _el) in res.iter().enumerate() {
             query.push_str(" or ");
@@ -75,7 +75,7 @@ impl Database {
             let host2 = split_hostname[(i+1)..(num_sub_domain)].join(".");
             query.push_str("hostname = '*.");
             query.push_str(&host2);
-            query.push_str("'");
+            query.push('\'');
         }
 
         match self.connection.as_mut() {
@@ -96,14 +96,14 @@ impl Database {
     fn valid_hostname(&mut self, hostname: &str) -> bool {
         let mut query = String::from("SELECT coalesce(valid, 0) as valid from ( SELECT max(priority), valid from activity where ");
         
-        let split_hostname: Vec<_> = hostname.split(".").collect();
+        let split_hostname: Vec<_> = hostname.split('.').collect();
         let num_sub_domain = split_hostname.len();
 
         let res = &split_hostname[1..(num_sub_domain-1)];
 
         query.push_str("hostname = '");
         query.push_str(hostname);
-        query.push_str("'");
+        query.push('\'');
 
         for (i, _el) in res.iter().enumerate() {
             query.push_str(" or ");
@@ -111,9 +111,9 @@ impl Database {
             let host2 = split_hostname[(i+1)..(num_sub_domain)].join(".");
             query.push_str("hostname = '*.");
             query.push_str(&host2);
-            query.push_str("'");
+            query.push('\'');
         }
-        query.push_str(")");
+        query.push(')');
         // println!("{}", query);
 
         match self.connection.as_mut() {
@@ -148,7 +148,7 @@ fn handle_client(mut stream: TcpStream) {
     // Read the bytes from the stream
     _ = match stream.read(&mut buf) {
         Ok(n) => n,
-        Err(_) => return () // early return if an error
+        Err(_) => return 
     }; 
     
     let mut headers = [httparse::EMPTY_HEADER; 16];
@@ -156,7 +156,7 @@ fn handle_client(mut stream: TcpStream) {
     // _ = request.parse(&buf).unwrap();
     _ = match request.parse(&buf) {
         Ok(_) => true,
-        Err(_) => return (),
+        Err(_) => return,
     };
     
     let mut website = String::from(request.path.unwrap());
@@ -172,34 +172,31 @@ fn handle_client(mut stream: TcpStream) {
 
     if permissive_mode && !has_hostname {
 
-    } else {
-        if !is_not_valid && !bypass {
-            if !DEAMON_MODE { 
-                println!("Blocking {result}");
-            }
+    } else if !is_not_valid && !bypass {
+        if !DEAMON_MODE { 
+            println!("Blocking {result}");
+        }
 
-            let response =  format!("Blocked website: {}\n", website);
+        let response =  format!("Blocked website: {}\n", website);
 
-            let s = format!(
-                "\
-                HTTP/1.1 423 Blocked\r\n\
-                Server: Traffic Service\r\n\
-                Content-Length: {}\r\n\
-                \r\n\
-                {}",
-                response.len(),
-                response
-            );
+        let s = format!(
+            "\
+            HTTP/1.1 423 Blocked\r\n\
+            Server: Traffic Service\r\n\
+            Content-Length: {}\r\n\
+            \r\n\
+            {}",
+            response.len(),
+            response
+        );
 
-            match stream.write_all(s.as_bytes()) {
-                Ok(_) => {
-                    _ = stream.flush().unwrap();
-                    _ = stream.try_clone().expect("clone failed...");
-                },
-                Err(_) => return ()
-            };
-
-            return ()
+        match stream.write_all(s.as_bytes()) {
+            Ok(_) => {
+                stream.flush().unwrap();
+                _ = stream.try_clone().expect("clone failed...");
+                return
+            },
+            Err(_) => return
         }
     }
 
@@ -211,10 +208,7 @@ fn handle_client(mut stream: TcpStream) {
 
     if !method.eq("CONNECT") {
         let url = Url::parse(&website).unwrap();
-        let port_site = match url.port() {
-            None => 80,
-            Some(p) => p
-        }; 
+        let port_site = url.port().unwrap_or(80);
 
         let host = url.host().unwrap();
         website = format!("{}:{}", host, &port_site);
@@ -224,7 +218,7 @@ fn handle_client(mut stream: TcpStream) {
         Ok(t) => t,
         Err(err) => {
             println!("Error: {err}");
-            return ()
+            return
         }
     };
 
@@ -232,12 +226,12 @@ fn handle_client(mut stream: TcpStream) {
     if method.eq("CONNECT") {
         match stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n") {
             Ok(_) => (),
-            Err(_) => return ()
+            Err(_) => return
         };
     } else {
         match tunnel.write_all( &buf) {
             Ok(_) => (),
-            Err(_) => return ()
+            Err(_) => return
         };
        
     }
@@ -245,11 +239,11 @@ fn handle_client(mut stream: TcpStream) {
     // Set both sockets to nonblocking mode
     match stream.set_nonblocking(true) {
         Ok(()) => (),
-        Err(_) => return ()
+        Err(_) => return
     };
     match tunnel.set_nonblocking(true) {
         Ok(()) => (),
-        Err(_) => return ()
+        Err(_) => return
     }
     let mut stream_buf = [0u8; 4096]; // Buffer containing data received from stream
     let mut tunnel_buf = [0u8; 4096]; // Buffer containing data received from tunnel
@@ -261,41 +255,41 @@ fn handle_client(mut stream: TcpStream) {
         // Read data from stream to be sent to tunnel -- only read if stream_buf is empty
         if stream_nbytes == 0 {
             stream_nbytes = match stream.read(&mut stream_buf) {
-                Ok(0) => return (), // Socket closed 
+                Ok(0) => return, // Socket closed 
                 Ok(n) => n,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // If there is no data, return 0 bytes written
-                Err(_) => return ()
+                Err(_) => return
             };
         }
         // Read data from tunnel to be sent to stream -- only read if tunnel_buf is empty
         if tunnel_nbytes == 0 {
             tunnel_nbytes = match tunnel.read(&mut tunnel_buf) {
-                Ok(0) => return (), // Socket closed 
+                Ok(0) => return , // Socket closed 
                 Ok(n) => n,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // If there is no data, return 0 bytes written
-                Err(_) => return ()
+                Err(_) => return 
             };
         }
         // Write data from stream to tunnel
         if stream_nbytes > 0 {
             // Pass the slice corresponding to first `stream_nbytes`
-            match tunnel.write(&mut stream_buf[0..stream_nbytes]) {
-                Ok(0) => return (), // Socket closed 
+            match tunnel.write(&stream_buf[0..stream_nbytes]) {
+                Ok(0) => return, // Socket closed 
                 Ok(n) if n == stream_nbytes => stream_nbytes = 0, // If we get equal 
-                Ok(_) => { println!("Cannot write partially :("); return () }, // No support for partial nbytes
+                Ok(_) => { println!("Cannot write partially :("); return }, // No support for partial nbytes
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => (), // Write the bytes in later
-                Err(_) => return ()
+                Err(_) => return
             }
         }
         // Write data from tunnel to stream
         if tunnel_nbytes > 0 {
             // Pass the slice corresponding to first `stream_nbytes`
-            match stream.write(&mut tunnel_buf[0..tunnel_nbytes]) {
-                Ok(0) => return (), // Socket closed
+            match stream.write(& tunnel_buf[0..tunnel_nbytes]) {
+                Ok(0) => return, // Socket closed
                 Ok(n) if n == tunnel_nbytes => tunnel_nbytes = 0, // If we get equal 
-                Ok(_) => { println!("Cannot write partially :("); return () }, // No support for partial nbytes
+                Ok(_) => { println!("Cannot write partially :("); return }, // No support for partial nbytes
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => (), // Write the bytes in later
-                Err(_) => return ()
+                Err(_) => return
             }
         }
     }
@@ -310,7 +304,7 @@ unsafe fn set_enable_by_pass() -> bool {
         BYPASS = false;
     }
 
-    return BYPASS;
+    BYPASS
 }
 
 

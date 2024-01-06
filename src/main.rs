@@ -29,6 +29,20 @@ impl Database {
         };
     }
 
+    fn permessive_mode(&mut self) -> bool {
+        let query = String::from("SELECT permessive from CONFIG");
+        match self.connection.as_mut() {
+            Some(connection) => {
+                let mut statement = connection.prepare(query).unwrap();
+                match statement.next() {
+                    Ok(_) => statement.read::<i64, _>("permessive").unwrap() == 1,
+                    Err(_) => false,
+                }
+            },
+            None => false //panic!("Error"),
+        }
+    }
+
     fn enable_bypass_from_db(&mut self) -> bool {
         let query = String::from("SELECT bypass from CONFIG");
         match self.connection.as_mut() {
@@ -36,6 +50,21 @@ impl Database {
                 let mut statement = connection.prepare(query).unwrap();
                 match statement.next() {
                     Ok(_) => statement.read::<i64, _>("bypass").unwrap() == 1,
+                    Err(_) => false,
+                }
+            },
+            None => false //panic!("Error"),
+        }
+    }
+
+    fn has_hostname(&mut self, hostname: &str) -> bool { 
+        let query = format!("SELECT count(hostname) as len from activity where hostname ='{}'", hostname);
+
+        match self.connection.as_mut() {
+            Some(connection) => {
+                let mut statement = connection.prepare(query).unwrap();
+                match statement.next() {
+                    Ok(_) => statement.read::<i64, _>("len").unwrap() > 0,
                     Err(_) => false,
                 }
             },
@@ -82,6 +111,8 @@ impl Database {
 
 // "/data/activities.db"
 
+
+
 fn handle_client(mut stream: TcpStream) {
     let mut db = Database { 
         in_memory: true, 
@@ -101,7 +132,11 @@ fn handle_client(mut stream: TcpStream) {
     
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut request = httparse::Request::new(&mut headers);
-    _ = request.parse(&buf).unwrap();
+    // _ = request.parse(&buf).unwrap();
+    _ = match request.parse(&buf) {
+        Ok(_) => true,
+        Err(_) => return (),
+    };
     
     let mut website = String::from(request.path.unwrap());
 
@@ -109,14 +144,42 @@ fn handle_client(mut stream: TcpStream) {
     let result = re.replace_all(&website, "");
 
     let bypass = !db.enable_bypass_from_db() && !db.by_pass;
+    let permissive_mode = db.permessive_mode();
+
+    let has_hostname = db.has_hostname(&result);
     let is_not_valid = db.valid_hostname(&result);
 
-    if !is_not_valid && !bypass {
-        if !DEAMON_MODE { 
-            println!("Blocking {result}");
-        }
+    if permissive_mode && !has_hostname {
 
-        return ()
+    } else {
+        if !is_not_valid && !bypass {
+            if !DEAMON_MODE { 
+                println!("Blocking {result}");
+            }
+
+            let response =  format!("Blocked website: {}\n", website);
+
+            let s = format!(
+                "\
+                HTTP/1.1 423 Blocked\r\n\
+                Server: Traffic Service\r\n\
+                Content-Length: {}\r\n\
+                \r\n\
+                {}",
+                response.len(),
+                response
+            );
+
+            match stream.write_all(s.as_bytes()) {
+                Ok(_) => {
+                    _ = stream.flush().unwrap();
+                    _ = stream.try_clone().expect("clone failed...");
+                },
+                Err(_) => return ()
+            };
+
+            return ()
+        }
     }
 
     if !DEAMON_MODE { 
@@ -131,9 +194,9 @@ fn handle_client(mut stream: TcpStream) {
             None => 80,
             Some(p) => p
         }; 
-        
-        website.push_str(":");
-        website.push_str(&port_site.to_string());
+
+        let host = url.host().unwrap();
+        website = format!("{}:{}", host, &port_site);
     }
 
     let mut tunnel = match TcpStream::connect(website) {
